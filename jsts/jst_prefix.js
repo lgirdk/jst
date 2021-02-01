@@ -85,7 +85,8 @@ function session_start()
   if($_jst_session)
     return;
   ccsp_session.start();
-  header("Set-Cookie: DUKSID=" + ccsp_session.getId() + ";");
+  var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; httponly";
+  header($cookie);
   $_jst_session = ccsp_session.getData();
   $_SESSION = new Proxy($_jst_session, {
     get: function(obj, prop) {
