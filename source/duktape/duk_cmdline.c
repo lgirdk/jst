@@ -102,10 +102,13 @@
 #endif
 
 #include "../jst.h"
+#include <unistd.h>
 
 #define  MEM_LIMIT_NORMAL   (128*1024*1024)   /* 128 MB */
 #define  MEM_LIMIT_HIGH     (2047*1024*1024)  /* ~2 GB */
 #define  LINEBUF_SIZE       65536
+
+char* jst_debug_file_name = NULL;
 
 static int main_argc = 0;
 static char **main_argv = NULL;
@@ -1280,6 +1283,32 @@ static void destroy_duktape_heap(duk_context *ctx, int alloc_provider) {
 #endif
 }
 
+int create_jst_debug_file_name(const char* arg)
+{
+  const char* env;
+  char* uri;
+  size_t len;
+  char* eol;
+  char* p;
+ 
+  env = getenv("REQUEST_URI");
+  if(env && strstr(env, ".jst") == NULL)
+    return -1;
+
+  uri = strdup(env ? env : arg);
+  len = strlen(uri);
+  eol = uri + len;
+  p = uri;
+  while(p != eol)
+  {
+    if(*p == '/')
+      *p = '_';
+    p++;
+  }
+  jst_debug_file_name = uri;
+  return 0;
+}
+
 /*
  *  Main
  */
@@ -1320,22 +1349,48 @@ int main(int argc, char *argv[], char **envp) {
     exit(0);
   }
 
-  FILE* argsFile = fopen("/tmp/argsFile", "w");
-  for (i = 0; i < argc; ++i)
+  if(access("/tmp/jst_enable_dbg", F_OK) == 0 && argc >= 2)
   {
-    fprintf(argsFile, "%s\n", argv[i]);    
+    char path[256];
+    FILE* argsFile;
+    FILE* penvFile;
+
+    if(create_jst_debug_file_name(argv[1]) == 0)
+    {
+      snprintf(path, 255, "/tmp/jst_dbg_argsFile%s", jst_debug_file_name);
+      argsFile = fopen(path, "w");
+      if(argsFile)
+      {
+        for (i = 0; i < argc; ++i)
+        {
+          fprintf(argsFile, "%s\n", argv[i]);    
+        }
+        fclose(argsFile);
+      }
+
+      snprintf(path, 255, "/tmp/jst_dbg_penvFile%s", jst_debug_file_name);
+      penvFile = fopen(path, "w");
+      if(penvFile)
+      {
+        for (char **env = envp; *env != 0; env++)
+        {
+          char* val = strchr(*env, '=');
+          if(val)
+          {
+            val++;
+            fwrite("export ", 7, 1, penvFile);
+            fwrite(*env, (int)(val-*env), 1, penvFile);
+            fwrite("\"", 1, 1, penvFile);
+            fwrite(val, (int)strlen(val), 1, penvFile);
+            fwrite("\"\n", 2, 1, penvFile);
+          }
+          else
+            fprintf(penvFile, "%s\n", *env);
+        }
+        fclose(penvFile);
+      }
+    }
   }
-  fclose(argsFile);
-
-
-  FILE* penvFile = fopen("/tmp/penvFile", "w");
-  for (char **env = envp; *env != 0; env++)
-  {
-    char *thisEnv = *env;
-    fprintf(penvFile, "%s\n", thisEnv);    
-  }
-  fclose(penvFile);
-
 #if defined(EMSCRIPTEN)
 	/* Try to use NODEFS to provide access to local files.  Mount the
 	 * CWD as /working, and then prepend "/working/" to relative native
@@ -1577,6 +1632,9 @@ int main(int argc, char *argv[], char **envp) {
 		destroy_duktape_heap(ctx, alloc_provider);
 	}
 	ctx = NULL;
+
+  if(jst_debug_file_name)
+    free(jst_debug_file_name);
 
 	return retval;
 

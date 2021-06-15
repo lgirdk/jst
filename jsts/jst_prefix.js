@@ -20,18 +20,26 @@ try
 {
 /* HEADERS: accumulate headers into a buffer
             to send to stdout in _jst_finish*/
-_jst_header_buffer = "Content-type: text/html";
+_jst_header_content_type_set = false;
+_jst_header_buffer = "";
 function header(str)
 {
-  if(str.toLowerCase().indexOf('location:') == 0)
+  lstr = str.toLowerCase();
+  if(lstr.indexOf('location:') == 0)
   {
     _jst_header_buffer = "HTTP/1.0 302 Ok\r\n";
     _jst_header_buffer += "Status: 302 Moved\r\n";
-    _jst_header_buffer += str;
+    _jst_header_buffer += str + "\r\n";
   }
   else
   {
-    _jst_header_buffer += "\n" + str;
+    if(lstr.indexOf('content-type:') == 0)
+    {
+      _jst_header_content_type_set = true;
+      if(lstr.indexOf('application/json') != -1)
+        _jst_header_buffer += "Content-Type: text/html\r\n";
+    }
+    _jst_header_buffer += str + "\r\n";
   }
 }
 
@@ -48,9 +56,9 @@ function echo(str)
            and it will send the headers and content to stdout */
 function _jst_finish()
 {
-  print(_jst_header_buffer);
-  print("\r\n\r\n\n");
-  print(_jst_echo_buffer);
+  if(!_jst_header_content_type_set)
+    print("Content-type: text/html\r");
+  print(_jst_header_buffer + "\r\n" + _jst_echo_buffer);
 }
 
 /* EXIT: there is no way to simply quit in the middle of a script, so
@@ -148,6 +156,37 @@ if(postData)
     }
     else
       print("unexpected post data");
+  }
+}
+
+/* FILES: multipart/form-data files via stdin */
+$_FILES={};
+var filesData = ccsp_post.getFiles();
+if(filesData)
+{
+  var fileList = filesData.split(';');
+  for(var i = 0; i < fileList.length; ++i)
+  {
+    var fileData = fileList[i].split('&');
+    var fileId = null;
+    for(var j = 0; j < fileData.length; ++j)
+    {
+      var fileValue = fileData[j].split('=');
+      if(fileValue.length == 2)
+      {
+        if(!fileId)
+        {
+          fileId = decodeURIComponent(fileValue[1]);
+          $_FILES[fileId]={};
+        }
+        else
+        {
+          $_FILES[fileId][decodeURIComponent(fileValue[0])]=decodeURIComponent(fileValue[1]);
+        }
+      }
+      else
+        print("unexpected file data");
+    }
   }
 }
 
