@@ -97,7 +97,6 @@ int parse_parameter(const char* func, duk_context *ctx, const char* types, ...)
           if(!strlen(*pstr))
           {
             CosaPhpExtLog("%s - parameter %d (string) empty\n", func, i);
-            success = 0;
           }
         }
         else
