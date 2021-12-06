@@ -79,7 +79,7 @@ endif(WANT_LIBINTL)
 
 if(BUILD_RDK)
   set(JST_SOURCES ${JST_SOURCES} source/jst_cosa.c)
-  set(JST_LIBS "${JST_LIBS} -lsso -lccsp_common")
+  set(JST_LIBS "${JST_LIBS} -lccsp_common")
 endif(BUILD_RDK)
 
 add_executable(jst ${JST_SOURCES})

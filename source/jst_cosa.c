@@ -27,9 +27,6 @@
 #include <ccsp_base_api.h>
 #include <ccsp_memory.h>
 #include <ccsp_custom.h>
-#ifdef COMCAST_SSO
-#include "sso_api.h"
-#endif /* COMCAST_SSO */
 #include "jst_internal.h"
 
 #define COMPONENT_NAME              "ccsp.phpextension"
@@ -1104,33 +1101,6 @@ EXIT0:
     return 1;
 }
 
-static duk_ret_t getJWT(duk_context *ctx)
-{
-    char *pURI = NULL;
-    char *pClientId = NULL;
-    char *pParams = NULL;
-    char *pFileName = NULL;
-    int iRet = 0;
-
-    CosaPhpExtLog( "getJWT - Entry\n" );
-    if (!parse_parameter(__FUNCTION__, ctx, "ssss", &pURI, &pClientId, &pParams, &pFileName ))
-    {
-        iRet = 1;
-    }
-    else
-    {
-      CosaPhpExtLog( "getJWT - calling SSOgetJWT\n" );
-#ifdef COMCAST_SSO
-      iRet = SSOgetJWT( pURI, pClientId, pParams, pFileName );
-#else
-      iRet = 1;
-#endif /* COMCAST_SSO */
-      CosaPhpExtLog( "getJWT - iRet = %d\n", iRet );
-    }
-    CosaPhpExtLog("getJWT - exit with value = %d\n", iRet);
-    RETURN_LONG(iRet);
-}
-
 static const duk_function_list_entry ccsp_cosa_funcs[] = {
   { "getStr", getStr, DUK_VARARGS },
   { "setStr", setStr, DUK_VARARGS },
@@ -1140,7 +1110,6 @@ static const duk_function_list_entry ccsp_cosa_funcs[] = {
   { "DmExtGetStrsWithRootObj", DmExtGetStrsWithRootObj, DUK_VARARGS },
   { "DmExtSetStrsWithRootObj", DmExtSetStrsWithRootObj, DUK_VARARGS },
   { "DmExtGetInstanceIds", DmExtGetInstanceIds, DUK_VARARGS },
-  { "getJWT", getJWT, DUK_VARARGS },
   { NULL, NULL, 0 }
 };
 

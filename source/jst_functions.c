@@ -497,6 +497,8 @@ static duk_ret_t do_openssl_verify_with_cert(duk_context *ctx)
   int err = 0;
   int ok = 0;
 
+  /* note that SHA256 is currently the only supported digest by this function
+   * add more as necessary using EVP_add_digest() or OpenSSL_add_all_digests() */
   if (!parse_parameter(__FUNCTION__, ctx, "ssss", &filepath, &token, &sig2verify, &alg))
   {
     CosaPhpExtLog("openssl_verify_with_cert: failed to parse parameters\n");
@@ -540,6 +542,8 @@ static duk_ret_t do_openssl_verify_with_cert(duk_context *ctx)
     CosaPhpExtLog("openssl_verify_with_cert: failed read public key from %s\n", filepath);
     RETURN_FALSE;
   }
+
+  EVP_add_digest(EVP_sha256());
 
   mdtype = EVP_get_digestbyname(alg);
   if(!mdtype)
