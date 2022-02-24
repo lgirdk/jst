@@ -262,7 +262,7 @@ static duk_ret_t getStr(duk_context *ctx)
     char*                   ppDestPath          = NULL;
     int                     size                = 0;
     parameterValStruct_t ** parameterVal        = NULL;
-    char                    retParamVal[1024]   = {0};
+    char                    retParamVal[1536]   = {0};
     int                     iReturn             = 0;
     char                    subSystemPrefix[6]  = {0};
 
