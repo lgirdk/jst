@@ -143,7 +143,7 @@ static int parse_content_type_header(char** boundary, int* boundary_len)
 
   stype = getenv("CONTENT_TYPE");
 
-  if(strstr(stype, "multipart/form-data"))
+  if(stype && strstr(stype, "multipart/form-data"))
   {
     char* boundary_start = NULL;
     type = HeaderContentTypeMPFD;
