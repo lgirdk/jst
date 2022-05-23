@@ -25,7 +25,17 @@
 #include <unistd.h>
 #include <time.h>
 #include <ctype.h>
+#include <errno.h>
 #include "jst_internal.h"
+
+#define POST_DATA_DIR         "/tmp"      /* directory where post data is saved to disk */
+#define POST_FILE_PREFIX      "jst_post_" /* prefix for each post data file saved to disk */
+#define POST_FILE_TEMPLATE    POST_DATA_DIR "/" POST_FILE_PREFIX "XXXXXX" 
+#define MEGABYTES(N)          ((N) * 1048576)
+#define POST_MAX_SIZE         MEGABYTES(8) /* maximum post data size we allow per request */
+#define POST_MAX_FILESIZE     MEGABYTES(2) /* maximum size of a single file being uploaded */
+#define POST_MAX_DISK_SPACE   MEGABYTES(8) /* maximum disk space we can use to save post data */
+#define TVSPEC_TO_SECONDS(t)  ((double)(t).tv_sec + ((t).tv_nsec / 1000000000.0))
 
 /*Debug controls*/
 /*set to 1 to save the post data sent via cgi to jst*/
@@ -84,6 +94,15 @@ typedef struct MPFDPart_
   char* tmp_file_name;
 } MPFDPart;
 
+#ifdef MULTI_FILE_UPLOAD_SUPPORT
+typedef struct PostFileStat_
+{
+  char* path;
+  double age;
+  unsigned long long size;
+} PostFileStat;
+#endif
+
 static char* post_data = NULL;
 static char* files_data = NULL;
 static int file_count = 0;
@@ -140,6 +159,7 @@ static int parse_content_type_header(char** boundary, int* boundary_len)
   int type = HeaderContentTypeTextPlain;
 
   *boundary = NULL;
+  *boundary_len = 0;
 
   stype = getenv("CONTENT_TYPE");
 
@@ -177,6 +197,11 @@ static int parse_content_type_header(char** boundary, int* boundary_len)
           len = strlen(boundary_start);
 
         *boundary = malloc(len + 3);
+        if(!*boundary)
+        {
+          CosaPhpExtLog("failed to allocate boundary\n");
+          return HeaderContentTypeNull;
+        }
         strcpy(*boundary, "--");
         strncat(*boundary, boundary_start, len);
         *boundary_len = len + 2;
@@ -253,50 +278,214 @@ static void init_mpfd_part(MPFDPart* part)
   part->type = MPFDContentTypeTextPlain;
 }
 
-static int write_upload_file(MPFDPart* part)
+#ifdef MULTI_FILE_UPLOAD_SUPPORT /*this needs testing*/
+static int post_files_stat(PostFileStat** pfiles)
 {
-  FILE* file;
-  char* path;
-  size_t write_len;
-  int path_len;
+  DIR* dirp;
+  struct dirent *dir;
+  size_t prefix_len;
+  int num_files;
+  int capacity;
+  PostFileStat* files;
+  struct timespec ts_now;
+  double now;
 
-  if(!part->file_name)
+  dirp = opendir(POST_DATA_DIR);
+  if(!dirp)
+  {
+    CosaPhpExtLog("failed to read post files directory %s: %s", POST_DATA_DIR, strerror(errno));
+    return -1;
+  }
+
+  prefix_len = strlen(POST_FILE_PREFIX);
+
+  files = NULL;
+    
+  timespec_get(&ts_now, TIME_UTC);
+  now = TVSPEC_TO_SECONDS(ts_now);
+
+  num_files = 0;
+
+  while((dir = readdir(dirp)) != NULL)
+  {
+    if(dir->d_type == DT_REG && strncmp(dir->d_name, POST_FILE_PREFIX, prefix_len) == 0)
+    {
+      struct stat st;
+      ssize_t path_len;
+
+      if(num_files == 0)
+      {
+        capacity = 10;
+        files = malloc(capacity * sizeof(PostFileStat));
+        if(!files)
+        {
+          CosaPhpExtLog("failed to allocate files list\n");
+          break;
+        }
+      }
+      else if(num_files == capacity)
+      {
+        capacity *= 2;
+        PostFileStat* rfiles = realloc(files, capacity * sizeof(PostFileStat));
+        if(rfiles)
+        {
+          files = rfiles;
+        }
+        else
+        {
+          CosaPhpExtLog("failed to rellocate files list\n");
+          free(files);
+          files = 0;
+          num_files = 0;
+          break;
+        }
+      }
+
+      path_len = snprintf(NULL, 0, "%s/%s", POST_DATA_DIR, dir->d_name);
+      files[num_files].path = malloc(path_len + 1);
+      if(!files[num_files].path)
+      {
+        CosaPhpExtLog("failed to allocate file path\n");
+        post_files_stat_free(files, num_files);
+        files = NULL;
+        num_files = 0;
+        break;
+      }
+      snprintf(files[num_files].path, path_len + 1, "%s/%s", POST_DATA_DIR, dir->d_name);
+
+      stat(files[num_files].path, &st);
+      
+      files[num_files].age = now - TVSPEC_TO_SECONDS(st.st_atim);
+      files[num_files].size = st.st_size;
+
+      num_files++;
+    }
+  }
+
+  closedir(dirp);
+  
+  *pfiles = files;
+  return num_files;
+}
+
+void post_files_stat_free(PostFileStat* files, int num_files)
+{
+  int i;
+  for(i = 0; i < num_files; ++i)
+    if(files[i].path)
+      free(files[i].path);
+  free(files);
+}
+
+static int post_files_age_compare(const void * p1, const void * p2)
+{
+  const PostFileStat* s1 = (const PostFileStat*)p1;
+  const PostFileStat* s2 = (const PostFileStat*)p2;
+  if(s1->age > s2->age)
+    return -1;
+  else if(s1->age < s2->age)
+    return 1;
+  else
+    return 0;
+}
+
+static int post_files_clean_directory(MPFDPart* part)
+{
+  PostFileStat* files;
+  int num_files;
+  int num_removed;
+  int i;
+  unsigned long long total_size;
+
+  num_files = post_files_stat(&files);
+  if(num_files <= 0)
     return 0;
 
-  if(strlen(part->file_name) == 0)
+  /*add total size of all files on disk plus the new file*/
+  total_size = part->body_len;
+  for(i = 0; i < num_files; ++i)
   {
-    part->file_error = UploadeErrNoFile;
-    return -1;
+    total_size += files[i].size;
   }
 
-  path_len = strlen(part->name) + strlen(part->file_name) + strlen("/tmp/jst_post_ccccxxxxxxXXXXXX__") + 1;
-  path = malloc(path_len);
-  snprintf(path, path_len, "/tmp/jst_post_%.4d%.6d%.6lu_%s_%s", file_count++, getpid(), clock(), part->name, part->file_name);
+  /*sort files oldest to newest */
+  qsort(files, num_files, sizeof(PostFileStat), post_files_age_compare);
 
-  file = fopen(path, "w");
-  if(!file)
+  /*remove files in oldest to newest order until we have enough space*/
+  num_removed = 0;
+  while(total_size > POST_MAX_DISK_SPACE && num_removed < num_files)
   {
-    part->file_error = UploadeErrNoTmpDir;
-    free(path);
-    return -1;
+    CosaPhpExtLog("cleanup removing post file %s\n", files[num_removed].path);
+    if(unlink(files[num_removed].path) < 0)
+    {
+      CosaPhpExtLog("cleanup failed to remove post file %s: %s", files[i].path, strerror(errno));
+    }
+    else
+    {
+      total_size -= files[num_removed].size;
+    }
+    num_removed++;
   }
-
-  write_len = fwrite(part->body, 1, part->body_len, file);
-  fclose(file);
-
-  if((int)write_len != part->body_len)
-  {
-    part->file_error = UploadeErrFailedWrite;
-    free(path);
-    return -1;
-  }
-
-  part->tmp_file_name = path;
-  part->file_error = UploadeErrOK;
+  
+  post_files_stat_free(files, num_files);
 
   return 0;
 }
+#else
+static int post_files_clean_directory(MPFDPart* part)
+{
+  //simple remove all existing file thus only allowing a single file to be saved
+  //sufficient for web ui since only webui-bwg has file upload and its for a single restore config
+  CosaPhpExtLog("removing previous post uploads: " 
+         "rm  -f " POST_DATA_DIR "/" POST_FILE_PREFIX "*" "\n");
+  system("rm  -f " POST_DATA_DIR "/" POST_FILE_PREFIX "*");
+}
+#endif
 
+static int write_upload_file(MPFDPart* part)
+{
+  if(part->body_len <= POST_MAX_FILESIZE)
+  {
+    char file_path[] = POST_FILE_TEMPLATE;
+    size_t file_path_len;
+    int file_fd;
+
+    post_files_clean_directory(part);
+
+    file_fd = mkstemp(file_path);
+    if(file_fd > -1)
+    {
+      ssize_t write_len;
+
+      write_len = write(file_fd, part->body, part->body_len);
+
+      if(write_len == (ssize_t)part->body_len)
+      {
+        CosaPhpExtLog("file %s uploaded\n", file_path);
+        part->tmp_file_name = strdup(file_path);
+        part->file_error = UploadeErrOK;
+      }
+      else
+      {
+        CosaPhpExtLog("failed to write upload file %s, rc=%d, error:%s\n", file_path, (int)write_len, strerror(errno));
+        part->file_error = UploadeErrFailedWrite;
+      }
+      close(file_fd);
+    }
+    else
+    {
+      CosaPhpExtLog("failed to open upload tmp file %s, error:%s\n", file_path, strerror(errno));
+      part->file_error = UploadeErrFailedWrite;
+    }
+  }
+  else
+  {
+    CosaPhpExtLog("failed to save upload file, file size %d exceeds limit %d\n", part->body_len, POST_MAX_FILESIZE);
+    part->file_error = UploadeErrFailedWrite;
+    return -1;
+  }
+  return part->file_error;
+}
 
 /* Examples:
   Content-Disposition: form-data; name="file"; filename="mrollinssavedconfig.CF2"
@@ -475,13 +664,28 @@ static int parse_mpfd_part(char** cursor, char* eof, const char* boundary, int b
   {
     *parts_len = 1;
     *parts = malloc(sizeof(MPFDPart));
+    if(!*parts)
+    {
+      CosaPhpExtLog("failed allocate mpfd parts\n");
+      return -1;
+    }
     memcpy(*parts, &part, sizeof(MPFDPart));
   }
   else
   {
     int len = *parts_len;
     len++;
-    *parts = realloc(*parts, sizeof(MPFDPart) * len);
+    MPFDPart* rparts = realloc(*parts, sizeof(MPFDPart) * len);
+    if(rparts)
+    {
+      *parts = rparts;
+    }
+    else
+    {
+      CosaPhpExtLog("failed reallocate mpfd parts\n");
+      return -1;
+    }
+
     memcpy(*parts+len-1, &part, sizeof(MPFDPart));
     (*parts_len)++;
   }
@@ -575,6 +779,11 @@ static void process_multipart_form_data(char* content_data, int content_len, cha
   {
     files_data_len++;/*null term*/
     files_data = cursor = malloc(files_data_len);
+    if(!files_data)
+    {
+      CosaPhpExtLog("failed to allocate files data\n");
+      return;
+    }
     num_files = 0;
     for(i=0; i<parts_len; ++i)
     {
@@ -615,6 +824,11 @@ static void process_multipart_form_data(char* content_data, int content_len, cha
   {
     post_data_len++;/*null term*/
     post_data = cursor = malloc(post_data_len);
+    if(!post_data)
+    {
+      CosaPhpExtLog("failed to allocate post data\n");
+      return;
+    }    
     num_posts = 0;
     for(i=0; i<parts_len; ++i)
     {
@@ -709,18 +923,31 @@ duk_ret_t ccsp_post_module_open(duk_context *ctx)
   if(env_content_len)
   {
     content_len = atoi(env_content_len);
+
+    if(content_len > POST_MAX_SIZE)
+    {
+      CosaPhpExtLog("post size %d exceeds limit %d\n", content_len, POST_MAX_SIZE);
+      return 1;
+    }
+  
     if(content_len > 0)
     {
       content_data = (char*)malloc(content_len + 1);
+      if(!content_data)
+      {
+        CosaPhpExtLog("failed to allocate content data\n");
+        return 1;
+      }
 #if DEBUG_POST_LOAD
       if(jst_debug_file_name && access("/tmp/jst_enable_dbg_load", F_OK) == 0)
         read_len = load_debug_post_data(content_data, content_len);
       else
 #endif
-        read_len = fread(content_data, 1, content_len, stdin);
+      read_len = fread(content_data, 1, content_len, stdin);
       content_data[content_len] = 0;
       if(read_len != content_len)
-      { //TODO log error
+      {
+        CosaPhpExtLog("failed to read post data\n");
       }
 #if DEBUG_POST_SAVE
       if(jst_debug_file_name && access("/tmp/jst_enable_dbg_save", F_OK) == 0)

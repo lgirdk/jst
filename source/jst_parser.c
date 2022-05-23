@@ -69,6 +69,10 @@ void buffer_init(growing_buffer* buf)
 {
   memset(buf, 0, sizeof(growing_buffer));
   buf->data = (char*)calloc(GB_BLOCK_SIZE, 1);
+  if(!buf->data)
+  {
+    log_debug_message("failed to alloc buffer data\n");
+  }
   buf->alloc_len = GB_BLOCK_SIZE;
   buf->write_len = 0;
 }
@@ -95,6 +99,7 @@ void buffer_push(growing_buffer* buf, const char* s, size_t len)
     {
       free(buf->data);
       memset(buf, 0, sizeof(growing_buffer));/*all future calls to buffer_push will return after the if(!buf->data) check above*/
+      log_debug_message("failed to realloc growing buffer\n");
       return;
     }
   }

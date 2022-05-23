@@ -70,6 +70,11 @@ static duk_ret_t session_start(duk_context *ctx)
   }
 
   session_identifier = (char*)malloc(SESSION_ID_LENGTH+1);
+  if(!session_identifier)
+  {
+    CosaPhpExtLog("Failed to allocate session_identifier!\n");
+    RETURN_FALSE;
+  }
   memset(session_identifier, 0, SESSION_ID_LENGTH+1);
 
   cookie = getenv("HTTP_COOKIE");
