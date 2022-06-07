@@ -30,7 +30,6 @@
 #define JST_CLOSE_LEN 2
 
 #define TMPL_MAX_INC_SZ 256
-
 #if CHAR_BIT != 8
   #pragma message "This code asssumes 8 bit chars"
 #endif
@@ -731,10 +730,9 @@ static int template_process(char** buf, size_t* buflen, int top)
   char* suffix;
   size_t suffix_len;
   char filepath[MAX_PATH_LEN];
-
   growing_buffer tbuf1;
   growing_buffer tbuf2;
-
+  char TEMPL_PATH[MAX_PATH_LEN] = "/usr/video_analytics/";
   buffer_init(&tbuf1);
   buffer_init(&tbuf2);
 
@@ -752,8 +750,7 @@ static int template_process(char** buf, size_t* buflen, int top)
 
   if(top)
   {
-    snprintf(filepath, MAX_PATH_LEN, "%sjst_prefix.js", g_document_root_path);
-
+    snprintf(filepath, MAX_PATH_LEN, "%sjst_prefix.js", TEMPL_PATH);
     if(!read_file(filepath, &prefix, &prefix_len))
     {
       log_debug_message("failed to open %s\n", filepath);
@@ -764,8 +761,7 @@ static int template_process(char** buf, size_t* buflen, int top)
       return 0;
     }
 
-    snprintf(filepath, MAX_PATH_LEN, "%sjst_suffix.js", g_document_root_path);
-
+    snprintf(filepath, MAX_PATH_LEN, "%sjst_suffix.js", TEMPL_PATH);
     if(!read_file(filepath, &suffix, &suffix_len))
     {
       log_debug_message("failed to open %s\n", filepath);
@@ -776,10 +772,9 @@ static int template_process(char** buf, size_t* buflen, int top)
       *buflen = 0;
       return 0;
     }
-
+    
     buffer_push(&tbuf2, prefix, prefix_len);
   }
-
   process_jst(tbuf1.data, tbuf1.write_len, &tbuf2);
 
   if(top)
@@ -809,7 +804,6 @@ int load_template_file(const char *filename, char** bufout, size_t* lenout, int 
   int i;
   char filepath[MAX_PATH_LEN];
   const char* pscriptname = filename;
-
   log_debug_message("load_template_file filename=%s top=%d\n", filename, top);
 
   *bufout = NULL;
@@ -841,7 +835,6 @@ int load_template_file(const char *filename, char** bufout, size_t* lenout, int 
       /*for cgi we can use cgi env vars to figure it out*/
       char* pscriptfile = getenv("SCRIPT_FILENAME");  /* eg: /tmp/www/actionHandler/ajaxSet_index_userbar.jst */
       pscriptname = getenv("SCRIPT_NAME");            /* eg: /actionHandler/ajaxSet_index_userbar.jst */
-
       if(pscriptname && pscriptfile)
       {
         char* p1;
@@ -924,12 +917,10 @@ int load_template_file(const char *filename, char** bufout, size_t* lenout, int 
   strcpy(g_include_paths[g_include_paths_count++], filepath);
 
   log_debug_message("load_template_file:%s filepath=%s root:%s top:%d\n", filename, filepath, g_document_root_path, top);
-
   if(!read_file(filepath, &buf, &buflen))
   {
     return 0;
   }
-
   rc = strlen(filename);
   if(rc > 4 && !strcmp(filename + rc - 4, ".jst"))
     if(!template_process(&buf, &buflen, top))
