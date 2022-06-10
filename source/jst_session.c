@@ -16,6 +16,8 @@
  See the License for the specific language governing permissions and
  limitations under the License.
 */
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,15 +28,25 @@
 #include <time.h>
 #include <ctype.h>
 #include "jst_internal.h"
+#include <sys/sysinfo.h>
+#include <stdint.h>
+#include <utime.h>
+#include <errno.h>
+#include <sys/syscall.h>
+#include <linux/random.h>
 
 #define RETURN_STRING(res) { duk_push_string(ctx, res); return 1; }
 #define RETURN_TRUE { duk_push_true(ctx); return 1; }
 #define RETURN_FALSE { duk_push_false(ctx); return 1; }
 
-#define SESSION_ID_LENGTH 20
+#define SESSION_PREFIX "jst_sess"
+#define SESSION_PREFIX_LEN 8
+#define SESSION_ID_BYTES_LENGTH 32 /*php default */
+#define SESSION_ID_LENGTH (SESSION_PREFIX_LEN + SESSION_ID_BYTES_LENGTH)
 #define SESSION_FILE_MAX_PATH 100
 #define SESSION_TMP_DIR "/tmp"
 #define SESSION_NUMBER_PRECISION 12
+#define BYTE_TO_PRINTABLE_HEX_CODE(B) ( PRINTABLE_HEX_CODES[ (uint32_t)(B) % (uint32_t)(sizeof(PRINTABLE_HEX_CODES)-1) ] )
 
 /*
   session data is stored to file in /tmp directory
@@ -62,10 +74,16 @@ static char* session_identifier = NULL;
 static duk_ret_t session_start(duk_context *ctx)
 {
   const char* cookie;
-
   /* if session already created then do nothing */
   if(session_identifier)
   {
+    char path[SESSION_FILE_MAX_PATH];
+    snprintf(path, SESSION_FILE_MAX_PATH, "%s/%s", SESSION_TMP_DIR, session_identifier);
+    if(utime(path, NULL) != 0)
+    {
+      CosaPhpExtLog("failed to update last accesstime on file %s: %s", path, strerror(errno));
+      RETURN_FALSE;
+    }
     RETURN_TRUE;
   }
 
@@ -82,7 +100,12 @@ static duk_ret_t session_start(duk_context *ctx)
   {
     /*load session id from cookie*/
     const char* sesid;
-    sesid = strstr(cookie, "DUKSID=");
+    const char* tmp = cookie;
+    while (tmp = strstr(tmp, "DUKSID="))
+    {
+      sesid= tmp;
+      tmp++;
+    }
     if(sesid)
     {
       sesid += 7;
@@ -97,16 +120,29 @@ static duk_ret_t session_start(duk_context *ctx)
   /*if no cookie with valid session then create a new one*/
   if(!session_identifier[0])
   {
-    int pid;
-    struct timeval tv;
-    /* create session id of length 20 using pid and current microsecond
-      the pid alone might be enough since a user would get their own cgi process
-      but to be safe, the current microseconds adds an additional 1/1000000 chance of duplication */
-    pid = getpid();
-    gettimeofday(&tv, NULL);
-    sprintf(session_identifier, "sess%010d%06ld", pid, tv.tv_usec);
-  }
+    static const char PRINTABLE_HEX_CODES[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    int i = 0, n = 0;
+    uint8_t bytes[SESSION_ID_BYTES_LENGTH];
+    char* session_id = NULL;
+    
+    session_id = (char*)malloc(SESSION_ID_BYTES_LENGTH+1);
+    n = syscall(SYS_getrandom, bytes, SESSION_ID_BYTES_LENGTH, 0);
+    if(n != SESSION_ID_BYTES_LENGTH)
+    {
+      CosaPhpExtLog("failed to get random bytes\n");
+      free(session_id);
+      RETURN_FALSE;
+    }
 
+    for(i = 0; i < SESSION_ID_BYTES_LENGTH; ++i)
+    {
+      session_id[i] = BYTE_TO_PRINTABLE_HEX_CODE(bytes[i]);
+    }
+
+    session_id[SESSION_ID_BYTES_LENGTH] = '\0';
+    snprintf(session_identifier, SESSION_ID_LENGTH+1, "%s%s", SESSION_PREFIX, session_id);
+  }
+  
   RETURN_TRUE;
   return 1;
 }
@@ -126,7 +162,7 @@ static duk_ret_t session_get_data(duk_context *ctx)
   int count;
   int state;/*0=key, 1=type, 2=value*/
   char* s1;
-
+ 
   if(session_identifier == NULL)
   {
     RETURN_FALSE;
@@ -244,7 +280,7 @@ static duk_ret_t session_set_data(duk_context *ctx)
 {
   FILE* pfile;
   char filename[SESSION_FILE_MAX_PATH];
-
+  
   if(session_identifier == NULL)
   {
     fprintf(stderr, "%s: session not started", __PRETTY_FUNCTION__);
