@@ -93,7 +93,11 @@ function session_start()
   if($_jst_session)
     return;
   ccsp_session.start();
-  var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; httponly";
+  var host = getenv('HTTPS');
+  if (host == false)
+      var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; httponly";
+  else
+      var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; secure" + "; httponly";
   header($cookie);
   $_jst_session = ccsp_session.getData();
   $_SESSION = new Proxy($_jst_session, {
