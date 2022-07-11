@@ -24,15 +24,17 @@ catch(err)
 {
   if(typeof(err._jst_exit_code) !== 'undefined')
   {
+	
     _jst_finish();
   }
   else
   {
-    print("<html><body>");
+ 
+   /*print("<html><body>");
     if(typeof(err.stack) === 'string')
       print(err.stack.replace(/\n/g, "<br/>\n") + "<br/>");
     else
       print(err);
-    print("</body></html>");
+    print("</body></html>"); */
   } 
 }
