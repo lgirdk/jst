@@ -41,7 +41,7 @@
 
 #define SESSION_PREFIX "jst_sess"
 #define SESSION_PREFIX_LEN 8
-#define SESSION_ID_BYTES_LENGTH 32 /*php default */
+#define SESSION_ID_BYTES_LENGTH 12 /*php default */
 #define SESSION_ID_LENGTH (SESSION_PREFIX_LEN + SESSION_ID_BYTES_LENGTH)
 #define SESSION_FILE_MAX_PATH 100
 #define SESSION_TMP_DIR "/tmp"
