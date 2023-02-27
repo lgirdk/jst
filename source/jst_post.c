@@ -113,7 +113,9 @@ static duk_ret_t get_post(duk_context *ctx)
   if(post_data)
   {
     duk_push_string(ctx, post_data); 
-    free(post_data); //freeing here is ok only because jst_prefix.js calls getPost once
+    if(post_data != NULL){
+	free(post_data); //freeing here is ok only because jst_prefix.js calls getPost once	
+    }
     post_data = NULL;
     return 1;
   }
