@@ -41,8 +41,9 @@
 
 #define SESSION_PREFIX "jst_sess"
 #define SESSION_PREFIX_LEN 8
-#define SESSION_ID_BYTES_LENGTH 12 /*php default */
+#define SESSION_ID_BYTES_LENGTH 32 /*php default */
 #define SESSION_ID_LENGTH (SESSION_PREFIX_LEN + SESSION_ID_BYTES_LENGTH)
+#define SESSION_ID_CSRFP_LENGTH 64
 #define SESSION_FILE_MAX_PATH 100
 #define SESSION_TMP_DIR "/tmp"
 #define SESSION_NUMBER_PRECISION 12
@@ -112,7 +113,28 @@ static duk_ret_t session_start(duk_context *ctx)
       int len = strlen(sesid);
       if(len >= SESSION_ID_LENGTH)
       {
-        strncpy(session_identifier, sesid, SESSION_ID_LENGTH);
+           int idx = SESSION_PREFIX_LEN;
+           int isvalid = 1;
+           /* Validate session ID*/
+           while ( idx < SESSION_ID_LENGTH) {
+              if (!isalnum(sesid[idx])) {
+                      CosaPhpExtLog("Invalid SessionID\n");
+                      isvalid = 0;
+                      break;
+              }
+              idx++;
+           }
+           //session id with csrfp_token should be greater than 64
+           if((strchr(sesid, ';')!=NULL))
+           {
+              if (isvalid && len >= SESSION_ID_CSRFP_LENGTH)
+                  strncpy(session_identifier, sesid, SESSION_ID_LENGTH);
+           } else {
+              if (isvalid)
+                  strncpy(session_identifier, sesid, SESSION_ID_LENGTH);
+           } 
+      } else {
+           CosaPhpExtLog("Invalid SessionID Entropy\n");
       }
     }
   }
