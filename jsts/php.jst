@@ -637,7 +637,15 @@ function parseIP(addr)
 
 function json_decode($str)
 {
-  return JSON.parse($str);
+  try {
+      var json = JSON.parse($str);
+      if( typeof json === 'object' ) {
+          return json;
+      }
+  }
+  catch (e) {}
+
+  return false;
 }
 
 function json_encode($obj)
@@ -856,6 +864,16 @@ function file_get_contents($path)
     fclose($file_ptr);
   }
   return $response;
+}
+
+function filemtime($filename)
+{
+    return ccsp.filemtime($filename);
+}
+
+function unlink($filename)
+{
+    return ccsp.unlink($filename)
 }
 
 ?>

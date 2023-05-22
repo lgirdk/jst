@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/stat.h>
 #include "jst_internal.h"
 #include "jst.h"
 
@@ -29,7 +30,18 @@
 #include <openssl/bio.h>
 #include <openssl/err.h>
 
+#include <curl/curl.h>
+
 #include <libintl.h>
+
+#define INITIAL_ALLOC 4     // arbitrary value, it will be realloc'd to the correct size later
+
+typedef struct {
+    void* pvOut;
+    size_t datasize;        // data size
+    size_t memsize;         // allocated memory size (if applicable)
+} MemData;
+
 
 static duk_ret_t do_getenv(duk_context *ctx)
 {
@@ -597,6 +609,171 @@ static duk_ret_t do_openssl_verify_with_cert(duk_context *ctx)
   }
 }
 
+static size_t curl_write_data(void *pvContents, size_t szOneContent, size_t numContentItems, void *userp)
+{
+  size_t szNewAllocSize;
+  size_t numBytes = numContentItems * szOneContent;         // num bytes is how big this data block is
+  MemData* pMemData = (MemData*)userp;
+  char *ptr;
+
+  if( (pMemData->datasize + numBytes) >= pMemData->memsize )     // if new data plus what we currently have stored >= current mem alloc
+  {
+      szNewAllocSize =  pMemData->datasize + numBytes + 1;
+      ptr = realloc( pMemData->pvOut, szNewAllocSize );     // current data size plus new data size plus 1 byte to ensure NULL terminator
+      if( ptr != NULL )
+      {
+          pMemData->memsize = szNewAllocSize;              // memsize now reflects the new allocation
+          pMemData->pvOut = ptr;                                           // pvOut is points to reallocation region
+      }
+      else
+      {
+          CosaPhpExtLog("WriteMemoryCB: realloc failed to find additional memory\n");
+          numBytes = 0;
+      }
+  }
+  else
+  {
+      ptr = (char*)pMemData->pvOut;            // otherwise point to already allocated memory
+  }
+
+  if( ptr != NULL )
+  {
+      memcpy( (ptr + pMemData->datasize), pvContents, numBytes );      // append new data to end of existing
+      pMemData->datasize += numBytes;                                  // update number of bytes in buffer
+      *(ptr + pMemData->datasize) = 0;     // append NULL terminator to buffer in case data did not have one, don't include in datasize though
+  }
+
+  return numBytes;
+}
+
+
+static duk_ret_t do_getSignKeys(duk_context *ctx)
+{
+    CURL *cp;
+    MemData MyMem;
+    FILE *fpOut = NULL;
+    char *pURI = NULL;
+    char *pOut = NULL;
+    long lHttp_code = 0;
+    CURLcode RetCode = 0xff;    // some error not used by curl
+    int step = 0;
+
+    if( parse_parameter(__FUNCTION__, ctx, "ss", &pURI, &pOut) )
+    {
+        if( pURI && pOut )
+        {
+            CosaPhpExtLog("do_getSignKeys URI=%s, Out=%s\n", pURI, pOut);
+
+            MyMem.memsize = 0;
+            MyMem.datasize = 0;
+            MyMem.pvOut = malloc( INITIAL_ALLOC );      // some number for initial alloc
+            if( MyMem.pvOut != NULL )
+            {
+                MyMem.memsize = INITIAL_ALLOC;          // same number as initial alloc above
+                curl_global_init(CURL_GLOBAL_ALL);
+                cp = curl_easy_init();
+                if( cp != NULL )
+                {
+#ifndef _ATOM_NO_EROUTER0
+                    // atom processors that use meta-rdk-soc-intel-gw do not have
+                    // an erouter0 interface. Do not compile this option in.
+                    // if needed (e.g. XB3 updates), create a jst.bbappend in
+                    // meta-rdk-soc-intel-gw/meta-intelce-atom/ and add this line;
+                    // CFLAGS_append = " -D_ATOM_NO_EROUTER0_ "
+                    RetCode = curl_easy_setopt( cp, CURLOPT_INTERFACE, "erouter0" );
+                    if( RetCode == CURLE_OK )
+                    {
+                        step = 1;
+                        RetCode = curl_easy_setopt( cp, CURLOPT_URL, pURI );
+                    }
+#else
+                    step = 1;
+                    RetCode = curl_easy_setopt( cp, CURLOPT_URL, pURI );
+#endif
+                    if( RetCode == CURLE_OK )
+                    {
+                        step = 2;
+                        RetCode = curl_easy_setopt( cp, CURLOPT_WRITEFUNCTION, curl_write_data );
+                    }
+                    if( RetCode == CURLE_OK )
+                    {
+                        step = 3;
+                        RetCode = curl_easy_setopt( cp, CURLOPT_WRITEDATA, (void*)&MyMem );
+                    }
+                    if( RetCode == CURLE_OK )
+                    {
+                        step = 4;
+                        RetCode = curl_easy_setopt( cp, CURLOPT_CONNECTTIMEOUT, 8L );
+                    }
+                    if( RetCode == CURLE_OK )
+                    {
+                        step = 5;
+                        RetCode = curl_easy_perform( cp );
+                        curl_easy_getinfo( cp, CURLINFO_RESPONSE_CODE, &lHttp_code );
+                    }
+                    if( RetCode == CURLE_OK && lHttp_code == 200 )
+                    {
+                        // only write to file if curl return is successful
+                        if( (fpOut=fopen( pOut, "w" )) != NULL )
+                        {
+                            fprintf( fpOut, "%s", (char*)MyMem.pvOut );
+                            fclose( fpOut );
+                        }
+                        else
+                        {
+                            CosaPhpExtLog( "getSignKeys: Error, fopen failed to open %s, error:%s\n", pOut, strerror(errno) ) ;
+                        }
+                    }
+                    else
+                    {
+                        CosaPhpExtLog( "getSignKeys: Error, curl failed step %d with error:%ld\n", step, RetCode ) ;
+                    }
+                    curl_easy_cleanup( cp );
+                }
+                else
+                {
+                    CosaPhpExtLog( "getSignKeys: Error, unable to create curl instance!\n" ) ;
+                }
+                free( MyMem.pvOut );
+            }
+            else
+            {
+                CosaPhpExtLog( "getSignKeys: Error, unable to allocate memory!\n" ) ;
+            }
+        }
+    }
+    RETURN_LONG( (long)RetCode );
+}
+
+static duk_ret_t do_filemtime(duk_context *ctx)
+{
+    struct stat mystat;
+    time_t modtime = -1;
+    char *pfilename;
+
+    if( parse_parameter(__FUNCTION__, ctx, "s", &pfilename) )
+    {
+        if( stat( pfilename, &mystat ) != -1 )
+        {
+            modtime = mystat.st_mtime;
+        }
+    }
+    RETURN_LONG( modtime );
+}
+
+static duk_ret_t do_unlink(duk_context *ctx)
+{
+    char *pfilename;
+    long lRet = -1;
+
+    if( parse_parameter(__FUNCTION__, ctx, "s", &pfilename) )
+    {
+        lRet = (long)unlink( pfilename );
+    }
+    RETURN_LONG( lRet );
+}
+
+
 static const duk_function_list_entry ccsp_functions_funcs[] = {
   { "getenv", do_getenv, 1 },
   { "bindtextdomain", do_bindtextdomain, 2 },
@@ -616,7 +793,10 @@ static const duk_function_list_entry ccsp_functions_funcs[] = {
   { "filesize", do_filesize, 1 },
   { "logger", do_logger, 1 },
   { "include", do_include, 1 },
-  { "openssl_verify_with_cert", do_openssl_verify_with_cert, 4 },    
+  { "openssl_verify_with_cert", do_openssl_verify_with_cert, 4 },
+  { "getSignKeys", do_getSignKeys, 2 },
+  { "filemtime", do_filemtime, 1 },
+  { "unlink", do_unlink, 1 },
   { NULL, NULL, 0 }
 };
 

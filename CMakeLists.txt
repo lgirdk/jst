@@ -31,6 +31,8 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE "Release")
 endif()
 
+find_package(CURL REQUIRED)
+
 # add duktape recommended cflags and cmdline options we need
 set (CMAKE_C_FLAGS
   "${CMAKE_C_FLAGS} \
@@ -54,8 +56,9 @@ set(CMAKE_C_FLAGS_RELEASE "-Os")
 set(CMAKE_C_FLAGS_DEBUG "-g -O0 -fno-inline")
 
 include_directories(
-	source
-  source/duktape)
+  source
+  source/duktape
+  ${CURL_INCLUDE_DIRS})
 
 set(JST_SOURCES 
   source/jst_parser.c
@@ -83,7 +86,7 @@ if(BUILD_RDK)
 endif(BUILD_RDK)
 
 add_executable(jst ${JST_SOURCES})
-target_link_libraries(jst ${JST_LIBS})
+target_link_libraries(jst ${JST_LIBS} ${CURL_LIBRARIES})
 
 if(BUILD_RDK)
   install (TARGETS jst
