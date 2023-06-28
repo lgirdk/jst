@@ -132,39 +132,54 @@ static duk_ret_t session_start(duk_context *ctx)
            } else {
               if (isvalid)
                   strncpy(session_identifier, sesid, SESSION_ID_LENGTH);
-           } 
+           }
       } else {
            CosaPhpExtLog("Invalid SessionID Entropy\n");
       }
     }
   }
-
-  /*if no cookie with valid session then create a new one*/
   if(!session_identifier[0])
   {
-    static const char PRINTABLE_HEX_CODES[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    int i = 0, n = 0;
-    uint8_t bytes[SESSION_ID_BYTES_LENGTH];
-    char* session_id = NULL;
-    
-    session_id = (char*)malloc(SESSION_ID_BYTES_LENGTH+1);
-    n = syscall(SYS_getrandom, bytes, SESSION_ID_BYTES_LENGTH, 0);
-    if(n != SESSION_ID_BYTES_LENGTH)
-    {
-      CosaPhpExtLog("failed to get random bytes\n");
-      free(session_id);
-      RETURN_FALSE;
-    }
-
-    for(i = 0; i < SESSION_ID_BYTES_LENGTH; ++i)
-    {
-      session_id[i] = BYTE_TO_PRINTABLE_HEX_CODE(bytes[i]);
-    }
-
-    session_id[SESSION_ID_BYTES_LENGTH] = '\0';
-    snprintf(session_identifier, SESSION_ID_LENGTH+1, "%s%s", SESSION_PREFIX, session_id);
+   CosaPhpExtLog("Invalid Session\n");
+   RETURN_FALSE;
   }
-  
+
+  RETURN_TRUE;
+  return 1;
+}
+static duk_ret_t session_create(duk_context *ctx)
+{
+  /*create a new one*/
+  static const char PRINTABLE_HEX_CODES[] = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  int i = 0, n = 0;
+  uint8_t bytes[SESSION_ID_BYTES_LENGTH];
+  char* session_id = NULL;
+
+  session_id = (char*)malloc(SESSION_ID_BYTES_LENGTH+1);
+  n = syscall(SYS_getrandom, bytes, SESSION_ID_BYTES_LENGTH, 0);
+  if(n != SESSION_ID_BYTES_LENGTH)
+  {
+    CosaPhpExtLog("failed to get random bytes\n");
+    free(session_id);
+    RETURN_FALSE;
+  }
+
+  for(i = 0; i < SESSION_ID_BYTES_LENGTH; ++i)
+  {
+    session_id[i] = BYTE_TO_PRINTABLE_HEX_CODE(bytes[i]);
+  }
+
+  session_identifier = (char*)malloc(SESSION_ID_LENGTH+1);
+  if(!session_identifier)
+  {
+    CosaPhpExtLog("Failed to allocate session_identifier!\n");
+    RETURN_FALSE;
+  }
+  memset(session_identifier, 0, SESSION_ID_LENGTH+1);
+
+  session_id[SESSION_ID_BYTES_LENGTH] = '\0';
+  snprintf(session_identifier, SESSION_ID_LENGTH+1, "%s%s", SESSION_PREFIX, session_id);
+
   RETURN_TRUE;
   return 1;
 }
@@ -417,6 +432,7 @@ static duk_ret_t session_destroy(duk_context *ctx)
 
 static const duk_function_list_entry ccsp_session_funcs[] = {
   { "start", session_start, 0 },
+  { "create", session_create, 0 },
   { "getId", session_get_id, 0 },
   { "getData", session_get_data, 0 },
   { "setData", session_set_data, 1 },

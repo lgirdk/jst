@@ -119,6 +119,34 @@ function session_start()
     }
   });
 }
+function session_create(){
+  ccsp_session.create();
+  var host = getenv('HTTPS');
+  if (host == false)
+    var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; httponly";
+  else
+    var $cookie = "Set-Cookie: DUKSID=" + ccsp_session.getId() + "; secure" + "; httponly";
+  header($cookie);
+  $_jst_session = ccsp_session.getData();
+  $_SESSION = new Proxy($_jst_session, {
+    get: function(obj, prop) {
+      return obj[prop];
+    },
+    set: function(obj, prop, val){
+      obj[prop] = val;
+      ccsp_session.setData(obj);
+      return true;
+    },
+    deleteProperty(obj, prop) {
+      if(prop in obj)
+      {
+        delete obj[prop];
+        ccsp_session.setData(obj);
+      }
+      return true;
+    }
+  });
+}
 function session_id()
 {
   return ccsp_session.getId();
