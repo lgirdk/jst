@@ -100,7 +100,7 @@ static duk_ret_t session_start(duk_context *ctx)
   if(cookie)
   {
     /*load session id from cookie*/
-    const char* sesid;
+    const char* sesid = NULL;
     const char* tmp = cookie;
     while (tmp = strstr(tmp, "DUKSID="))
     {
