@@ -513,7 +513,15 @@ static duk_ret_t getInstanceIds(duk_context *ctx)
     }
 
     //Place NULL char at the end of string
-    format_s[loop2-1]=0;
+    if (loop2 >= 1)
+    {
+        format_s[loop2-1]=0;
+    }
+    else
+    {
+        format_s[0]=0;
+        CosaPhpExtLog("loop2-1 is less than zero in format_s[]\n");
+    }
     RETURN_STRING(format_s);
 }
 
