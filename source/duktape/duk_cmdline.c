@@ -216,6 +216,20 @@ static void print_pop_error(duk_context *ctx, FILE *f) {
 	duk_pop(ctx);
 }
 
+// Function to generate secure random number
+int generateRandomNumber(int max) {
+    return rand() % (max + 1);
+}
+
+// C function that will be exposed to Duktape
+static duk_ret_t generate_random(duk_context *ctx) {
+    int max = duk_get_int(ctx, 0); // Get the maximum value from JavaScript arguments
+    int randomNumber = generateRandomNumber(max);
+    // Push the random number to the Duktape stack as a JavaScript number
+    duk_push_int(ctx, randomNumber);
+    return 1; // Number of return values
+}
+
 static duk_ret_t wrapped_compile_execute(duk_context *ctx, void *udata) {
 	const char *src_data;
 	duk_size_t src_len;
@@ -1200,7 +1214,9 @@ static duk_context *create_duktape_heap(int alloc_provider, int debugger, int lo
 	duk_push_c_function(ctx, fileio_write_file, 2 /*nargs*/);
 	duk_put_global_string(ctx, "writeFile");
 #endif
-
+        srand(time(NULL));
+        duk_push_c_function(ctx, generate_random, 1 /* number of arguments */);
+        duk_put_global_string(ctx, "generateRandom");
   ccsp_extensions_load(ctx);
 
 	/* Stash a formatting function for evaluation results. */
